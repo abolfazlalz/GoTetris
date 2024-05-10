@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
-	"fyne.io/fyne/v2/widget"
+	"image/color"
 )
 
 func main() {
@@ -19,16 +20,23 @@ func main() {
 
 	board := NewBoard(width, height, perPixel)
 
-	scoreLabel := widget.NewLabel("Score: 0")
+	scoreLabel := canvas.NewText("Score: 0", color.Black)
+	scoreLabel.TextSize = 32
+	scoreContainer := canvas.NewRectangle(color.White)
+	scoreContainer.Resize(fyne.NewSize(150, 50))
+	scoreContainer.FillColor = color.White
+	scoreContainer.Move(fyne.NewPos(25, 25))
+	scoreLabel.Move(fyne.NewPos(35, 25))
+	scoreLabel.Resize(fyne.NewSize(scoreLabel.Size().Height+10, scoreLabel.Size().Height+10))
 
-	c := container.NewGridWithColumns(1,
+	c := container.NewWithoutLayout(
 		board.Render(),
+		scoreContainer,
 		scoreLabel,
 	)
-
 	w.SetContent(c)
 
-	w.Resize(fyne.NewSize(600, 900))
+	w.Resize(fyne.NewSize(float32(width), float32(height)))
 
 	w.Canvas().SetOnTypedKey(func(event *fyne.KeyEvent) {
 		if event.Name == fyne.KeyRight {
@@ -48,7 +56,8 @@ func main() {
 				break
 			case AddScoreResult:
 				i++
-				scoreLabel.SetText(fmt.Sprintf("Score: %d", i))
+				scoreLabel.Text = fmt.Sprintf("Score: %d", i)
+				scoreLabel.Refresh()
 				break
 			}
 		}
