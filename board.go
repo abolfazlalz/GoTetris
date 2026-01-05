@@ -2,14 +2,15 @@ package main
 
 import (
 	"fmt"
-	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/canvas"
-	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/layout"
 	"image/color"
 	"math/rand"
 	"sync"
 	"time"
+
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/layout"
 )
 
 type Result int
@@ -32,6 +33,7 @@ type Board struct {
 	score    int
 	isDone   bool
 	resultCh chan Result
+	current  *Tetromino
 }
 
 func NewBoard(width, height, perPixel int) *Board {
@@ -207,56 +209,6 @@ func (b *Board) checkForExplodeRow() {
 	}
 }
 
-func (b *Board) shapeGenerator() {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	startXPoint := rand.Intn(b.rowPixel)
-	nX := b.rowPixel - startXPoint
-	if nX > 4 {
-		nX = 4
-	}
-	endXPoint := startXPoint + rand.Intn(nX)
-
-	startYPoint := 0
-	nY := b.colPixel - startYPoint
-	if nY > 3 {
-		nY = 3
-	} else if nY == 0 {
-		nY = 1
-	}
-
-	endYPoint := startYPoint + rand.Intn(nY)
-
-	c := b.randomColor()
-	for i := startXPoint; i <= endXPoint; i++ {
-		for j := startYPoint; j <= endYPoint; j++ {
-			if show := rand.Intn(5); ((startYPoint-endYPoint) <= 1 && (endXPoint-startXPoint) <= 1) || show != 2 {
-				b.pixels[j][i].SetColor(c)
-				b.pixels[j][i].round = b.round
-			}
-		}
-	}
-}
-
-func (b *Board) newRound() {
-	b.round++
-	b.shapeGenerator()
-}
-
-func (b *Board) Animate() {
-	b.shapeGenerator()
-	for range time.Tick(time.Millisecond * 250) {
-		if b.isDone {
-			return
-		}
-		if x := b.Down(); !x {
-			b.checkForGameOver()
-			b.checkForExplodeRow()
-			b.newRound()
-		}
-	}
-}
-
 func (b *Board) Render() fyne.CanvasObject {
 	items := make([]fyne.CanvasObject, 0)
 	for i := 0; i < b.colPixel; i++ {
@@ -270,4 +222,35 @@ func (b *Board) Render() fyne.CanvasObject {
 	co := container.New(layout.NewGridLayout(b.rowPixel), items...)
 	co.Resize(fyne.NewSize(float32(b.width), float32(b.height)))
 	return co
+}
+
+func (b *Board) spawnTetromino() {
+	t := NewRandomTetromino(b.rowPixel)
+	b.current = t
+
+	for y := 0; y < 4; y++ {
+		for x := 0; x < 4; x++ {
+			if t.Shape[y][x] == 1 {
+				b.pixels[t.Y+y][t.X+x].SetColor(t.Color)
+				b.pixels[t.Y+y][t.X+x].round = b.round
+			}
+		}
+	}
+}
+
+func (b *Board) Animate() {
+	b.spawnTetromino()
+
+	for range time.Tick(250 * time.Millisecond) {
+		if b.isDone {
+			return
+		}
+
+		if !b.Down() {
+			b.checkForGameOver()
+			b.checkForExplodeRow()
+			b.round++
+			b.spawnTetromino()
+		}
+	}
 }
