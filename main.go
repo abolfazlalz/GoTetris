@@ -2,70 +2,95 @@ package main
 
 import (
 	"fmt"
+	"image/color"
+
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
-	"image/color"
 )
 
 func main() {
 	myApp := app.New()
-	w := myApp.NewWindow("Tetris")
+	w := myApp.NewWindow("GoTetris")
 
-	const width int = 500
-	const height int = 800
-	const perPixel int = 50
+	const (
+		width    = 500
+		height   = 800
+		perPixel = 50
+	)
 
 	board := NewBoard(width, height, perPixel)
 
+	// --- UI: Score ---
 	scoreLabel := canvas.NewText("Score: 0", color.Black)
-	scoreLabel.TextSize = 32
-	scoreContainer := canvas.NewRectangle(color.White)
-	scoreContainer.Resize(fyne.NewSize(150, 50))
-	scoreContainer.FillColor = color.White
-	scoreContainer.Move(fyne.NewPos(25, 25))
-	scoreLabel.Move(fyne.NewPos(35, 25))
-	scoreLabel.Resize(fyne.NewSize(scoreLabel.Size().Height+10, scoreLabel.Size().Height+10))
+	scoreLabel.TextSize = 24
 
-	c := container.NewWithoutLayout(
+	scoreBg := canvas.NewRectangle(color.White)
+	scoreBg.Resize(fyne.NewSize(150, 40))
+	scoreBg.Move(fyne.NewPos(20, 20))
+
+	scoreLabel.Move(fyne.NewPos(30, 25))
+
+	// --- Layout ---
+	content := container.NewWithoutLayout(
 		board.Render(),
-		scoreContainer,
+		scoreBg,
 		scoreLabel,
 	)
-	w.SetContent(c)
 
-	w.Resize(fyne.NewSize(float32(width), float32(height)))
+	w.SetContent(content)
+	w.Resize(fyne.NewSize(width, height))
 
-	w.Canvas().SetOnTypedKey(func(event *fyne.KeyEvent) {
-		if event.Name == fyne.KeyRight {
-			board.Right()
-		} else if event.Name == fyne.KeyLeft {
-			board.Left()
+	// --- Keyboard input ---
+	w.Canvas().SetOnTypedKey(func(e *fyne.KeyEvent) {
+		board.mu.Lock()
+		defer board.mu.Unlock()
+
+		if board.isDone {
+			return
+		}
+
+		switch e.Name {
+		case fyne.KeyLeft:
+			board.Move(-1)
+
+		case fyne.KeyRight:
+			board.Move(1)
+
+		case fyne.KeyDown:
+			board.SoftDrop()
+
+		case fyne.KeySpace:
+			board.RotateCurrent()
+
+		case fyne.KeyEscape:
+			w.Close()
 		}
 	})
 
-	i := 0
+	// --- Result listener (score / game over) ---
 
 	go func() {
-		for {
-			switch <-board.resultCh {
-			case GameOverResult:
-				dialog.ShowInformation("Game Over", "Game over !!", w)
-				break
+		for r := range board.resultCh {
+			switch r {
 			case AddScoreResult:
-				i++
-				scoreLabel.Text = fmt.Sprintf("Score: %d", i)
+				// score update
+				board.mu.Lock()
+				board.score++
+				board.mu.Unlock()
+				scoreLabel.Text = fmt.Sprintf("Score: %d", board.score)
 				scoreLabel.Refresh()
-				break
+
+			case GameOverResult:
+				dialog.ShowInformation("Game Over", "Game over!!", w)
 			}
 		}
 	}()
 
-	go func() {
-		board.Animate()
-	}()
+	// --- Start game loop ---
+	go board.Animate()
 
 	w.ShowAndRun()
 }

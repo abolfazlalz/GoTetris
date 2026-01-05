@@ -91,3 +91,24 @@ func NewRandomTetromino(boardWidth int) *Tetromino {
 		Y:     0,
 	}
 }
+
+func (t *Tetromino) Rotate() {
+	t.Shape = rotateMatrixCW(t.Shape)
+}
+
+func rotateMatrixCW(matrix [][]int) [][]int {
+	n := len(matrix)
+	rotated := make([][]int, n)
+
+	for i := 0; i < n; i++ {
+		rotated[i] = make([]int, n)
+	}
+
+	for y := 0; y < n; y++ {
+		for x := 0; x < n; x++ {
+			rotated[x][n-1-y] = matrix[y][x]
+		}
+	}
+
+	return rotated
+}

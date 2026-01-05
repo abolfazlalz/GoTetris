@@ -1,16 +1,13 @@
 package main
 
 import (
-	"fmt"
 	"image/color"
-	"math/rand"
 	"sync"
 	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/layout"
 )
 
 type Result int
@@ -24,233 +21,219 @@ type Board struct {
 	width    int
 	height   int
 	perPixel int
-	rowPixel int
-	colPixel int
-	round    int
-	mu       sync.Mutex
-	pixels   [][]*Pixel
-	colors   []color.Color
-	score    int
+
+	rowPixel int // width
+	colPixel int // height
+
+	mu sync.Mutex
+
+	pixels  [][]*Pixel      // render layer
+	fixed   [][]color.Color // locked blocks
+	current *Tetromino      // active piece
+
 	isDone   bool
 	resultCh chan Result
-	current  *Tetromino
+	score    int
 }
 
 func NewBoard(width, height, perPixel int) *Board {
-	return &Board{
+	rows := height / perPixel
+	cols := width / perPixel
+
+	b := &Board{
 		width:    width,
 		height:   height,
 		perPixel: perPixel,
-		rowPixel: width / perPixel,
-		colPixel: height / perPixel,
-		pixels:   make([][]*Pixel, height/perPixel),
-		round:    1,
-		mu:       sync.Mutex{},
-		isDone:   false,
-		resultCh: make(chan Result),
-		score:    0,
-		colors: []color.Color{
-			color.RGBA{A: 255, R: 255},
-			color.RGBA{A: 255, G: 255},
-			color.RGBA{A: 255, B: 255},
-			color.RGBA{A: 255, R: 255, B: 255},
-			color.RGBA{A: 255, R: 255, G: 255},
-			color.RGBA{A: 255, B: 255, G: 255},
-		},
-	}
-}
-
-func (b *Board) AddScore() {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.score += 1
-	b.resultCh <- AddScoreResult
-}
-
-func (b *Board) GameOver() {
-	b.resultCh <- GameOverResult
-	b.isDone = true
-}
-
-func (b *Board) checkCollisionPixel(col, row int) (right, left, bottom bool) {
-	left = row == 0
-	bottom = col >= b.colPixel-1
-	right = row == b.rowPixel-1
-
-	if !bottom {
-		pixel := b.pixels[col+1][row]
-		bottom = !pixel.IsWhite() && pixel.round != b.pixels[col][row].round
-	}
-	if !left {
-		pixel := b.pixels[col][row-1]
-		left = !pixel.IsWhite() && pixel.round != b.pixels[col][row].round
+		rowPixel: cols,
+		colPixel: rows,
+		resultCh: make(chan Result, 1),
 	}
 
-	if !right {
-		pixel := b.pixels[col][row+1]
-		right = !pixel.IsWhite() && pixel.round != b.pixels[col][row].round
-	}
-
-	return
-}
-
-func (b *Board) checkCollisionRound() (right, left, bottom bool) {
-	right = true
-	left = true
-	bottom = true
-	for i := 0; i < b.colPixel; i++ {
-		for j := 0; j < b.rowPixel; j++ {
-			pixel := b.pixels[i][j]
-			if pixel.IsWhite() || pixel.round != b.round {
-				continue
-			}
-			newRight, newLeft, newBottom := b.checkCollisionPixel(i, j)
-			right = !newRight && right
-			left = !newLeft && left
-			bottom = !newBottom && bottom
+	b.fixed = make([][]color.Color, rows)
+	for y := 0; y < rows; y++ {
+		b.fixed[y] = make([]color.Color, cols)
+		for x := 0; x < cols; x++ {
+			b.fixed[y][x] = color.White
 		}
 	}
-	return !right, !left, !bottom
+
+	return b
 }
 
-func (b *Board) randomColor() color.Color {
-	cLen := len(b.colors)
-	return b.colors[rand.Intn(cLen)]
+func (b *Board) Animate() {
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		b.mu.Lock()
+		if b.isDone {
+			b.mu.Unlock()
+			return
+		}
+		b.tick()
+		b.mu.Unlock()
+	}
 }
 
-func (b *Board) Left() {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if _, left, _ := b.checkCollisionRound(); left {
+func (b *Board) tick() {
+	if b.current == nil {
+		b.spawnTetromino()
 		return
 	}
-	for i := b.colPixel - 1; 0 < i; i-- {
-		for j := 1; j < b.rowPixel; j++ {
-			pixel := b.pixels[i][j]
-			if pixel.IsWhite() || pixel.round != b.round {
-				continue
-			}
-			b.pixels[i][j-1].SetColor(pixel.FillColor)
-			b.pixels[i][j-1].round = pixel.round
-			pixel.SetColor(color.White)
-		}
-	}
-}
 
-func (b *Board) Right() {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if right, _, _ := b.checkCollisionRound(); right {
-		return
-	}
-	for i := 0; i < b.colPixel; i++ {
-		for j := b.rowPixel - 1; 0 <= j; j-- {
-			pixel := b.pixels[i][j]
-			if pixel.IsWhite() || pixel.round != b.round {
-				continue
-			}
-			b.pixels[i][j+1].SetColor(pixel.FillColor)
-			b.pixels[i][j+1].round = pixel.round
-			pixel.SetColor(color.White)
-		}
-	}
-}
-
-func (b *Board) Down() bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if _, _, bottom := b.checkCollisionRound(); bottom {
-		return false
-	}
-	for i := b.colPixel - 1; 0 <= i; i-- {
-		for j := 0; j < b.rowPixel; j++ {
-			pixel := b.pixels[i][j]
-			if pixel.IsWhite() || pixel.round != b.round {
-				continue
-			}
-			b.pixels[i+1][j].SetColor(pixel.FillColor)
-			b.pixels[i+1][j].round = pixel.round
-			pixel.SetColor(color.White)
-		}
-	}
-	return true
-}
-
-func (b *Board) checkForGameOver() {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	for i := 0; i < b.rowPixel; i++ {
-		block := b.pixels[0][i]
-		if !block.IsWhite() {
-			b.GameOver()
-			fmt.Println("game over !")
-			continue
-		}
-	}
-}
-
-func (b *Board) checkForExplodeRow() {
-	for i := 0; i < b.colPixel; i++ {
-		isFilled := true
-		for j := 0; j < b.rowPixel; j++ {
-			isFilled = !b.pixels[i][j].IsWhite() && isFilled
-		}
-		if isFilled {
-			b.AddScore()
-			for j := 0; j < b.rowPixel; j++ {
-				b.pixels[i][j].SetColor(color.White)
-			}
-			for i1 := i; 0 < i1; i1-- {
-				for j1 := 0; j1 < b.rowPixel; j1++ {
-					b.pixels[i1][j1].SetColor(b.pixels[i1-1][j1].FillColor)
-				}
-			}
-		}
-	}
-}
-
-func (b *Board) Render() fyne.CanvasObject {
-	items := make([]fyne.CanvasObject, 0)
-	for i := 0; i < b.colPixel; i++ {
-		b.pixels[i] = make([]*Pixel, b.rowPixel)
-		for j := 0; j < b.rowPixel; j++ {
-			b.pixels[i][j] = &Pixel{Rectangle: canvas.NewRectangle(color.White), round: 1}
-			items = append(items, b.pixels[i][j].Rectangle)
-		}
+	if b.canPlace(b.current, b.current.Shape, b.current.X, b.current.Y+1) {
+		b.current.Y++
+	} else {
+		b.lockCurrent()
 	}
 
-	co := container.New(layout.NewGridLayout(b.rowPixel), items...)
-	co.Resize(fyne.NewSize(float32(b.width), float32(b.height)))
-	return co
+	b.redraw()
 }
 
 func (b *Board) spawnTetromino() {
 	t := NewRandomTetromino(b.rowPixel)
 	b.current = t
 
+	if !b.canPlace(t, t.Shape, t.X, t.Y) {
+		b.isDone = true
+		b.resultCh <- GameOverResult
+	}
+}
+
+func (b *Board) lockCurrent() {
+	t := b.current
+
+	for y := 0; y < 4; y++ {
+		for x := 0; x < 4; x++ {
+			if t.Shape[y][x] == 1 {
+				b.fixed[t.Y+y][t.X+x] = t.Color
+			}
+		}
+	}
+
+	b.clearLines()
+	b.current = nil
+}
+
+func (b *Board) clearLines() {
+	for y := b.colPixel - 1; y >= 0; y-- {
+		full := true
+		for x := 0; x < b.rowPixel; x++ {
+			if b.fixed[y][x] == color.White {
+				full = false
+				break
+			}
+		}
+
+		if full {
+			b.score++
+			b.resultCh <- AddScoreResult
+
+			for yy := y; yy > 0; yy-- {
+				b.fixed[yy] = append([]color.Color{}, b.fixed[yy-1]...)
+			}
+			for x := 0; x < b.rowPixel; x++ {
+				b.fixed[0][x] = color.White
+			}
+			y++
+		}
+	}
+}
+
+func (b *Board) RotateCurrent() {
+	if b.current == nil {
+		return
+	}
+
+	rotated := rotateMatrixCW(b.current.Shape)
+	if b.canPlace(b.current, rotated, b.current.X, b.current.Y) {
+		b.current.Shape = rotated
+		b.redraw()
+	}
+}
+
+func (b *Board) Move(dx int) {
+	if b.current == nil {
+		return
+	}
+
+	if b.canPlace(b.current, b.current.Shape, b.current.X+dx, b.current.Y) {
+		b.current.X += dx
+		b.redraw()
+	}
+}
+
+func (b *Board) SoftDrop() {
+	if b.current == nil {
+		return
+	}
+
+	if b.canPlace(b.current, b.current.Shape, b.current.X, b.current.Y+1) {
+		b.current.Y++
+		b.redraw()
+	}
+}
+
+func (b *Board) canPlace(t *Tetromino, shape [][]int, nx, ny int) bool {
+	for y := 0; y < 4; y++ {
+		for x := 0; x < 4; x++ {
+			if shape[y][x] == 0 {
+				continue
+			}
+
+			bx := nx + x
+			by := ny + y
+
+			if bx < 0 || bx >= b.rowPixel || by < 0 || by >= b.colPixel {
+				return false
+			}
+
+			if b.fixed[by][bx] != color.White {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func (b *Board) redraw() {
+	for y := 0; y < b.colPixel; y++ {
+		for x := 0; x < b.rowPixel; x++ {
+			b.pixels[y][x].SetColor(b.fixed[y][x])
+		}
+	}
+
+	if b.current == nil {
+		return
+	}
+
+	t := b.current
 	for y := 0; y < 4; y++ {
 		for x := 0; x < 4; x++ {
 			if t.Shape[y][x] == 1 {
 				b.pixels[t.Y+y][t.X+x].SetColor(t.Color)
-				b.pixels[t.Y+y][t.X+x].round = b.round
 			}
 		}
 	}
 }
 
-func (b *Board) Animate() {
-	b.spawnTetromino()
+func (b *Board) Render() fyne.CanvasObject {
+	items := make([]fyne.CanvasObject, 0, b.rowPixel*b.colPixel)
 
-	for range time.Tick(250 * time.Millisecond) {
-		if b.isDone {
-			return
-		}
-
-		if !b.Down() {
-			b.checkForGameOver()
-			b.checkForExplodeRow()
-			b.round++
-			b.spawnTetromino()
+	b.pixels = make([][]*Pixel, b.colPixel)
+	for y := 0; y < b.colPixel; y++ {
+		b.pixels[y] = make([]*Pixel, b.rowPixel)
+		for x := 0; x < b.rowPixel; x++ {
+			p := &Pixel{
+				Rectangle: canvas.NewRectangle(color.White),
+			}
+			b.pixels[y][x] = p
+			items = append(items, p.Rectangle)
 		}
 	}
+
+	grid := container.NewGridWithColumns(b.rowPixel, items...)
+	grid.Resize(fyne.NewSize(float32(b.width), float32(b.height)))
+
+	return grid
 }

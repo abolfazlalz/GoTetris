@@ -1,9 +1,10 @@
 package main
 
 import (
-	"fyne.io/fyne/v2/canvas"
 	"image/color"
 	"strconv"
+
+	"fyne.io/fyne/v2/canvas"
 )
 
 type Pixel struct {
@@ -12,7 +13,7 @@ type Pixel struct {
 }
 
 func (b *Board) String() string {
-	return strconv.Itoa(b.round)
+	return strconv.Itoa(0)
 }
 
 func (p *Pixel) IsWhite() bool {
